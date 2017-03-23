@@ -20,6 +20,7 @@ from __future__ import print_function, division, absolute_import, unicode_litera
 import glob
 import numpy as np
 from PIL import Image
+import cv2
 
 class BaseDataProvider(object):
     """
@@ -107,7 +108,7 @@ class BaseDataProvider(object):
     
 
 
-class ImageDataProvider(BaseDataProvider):
+class ImageDataProvider(BaseDataProvider,complexity):
     """
     Generic data provider for images, supports gray scale and colored images.
     Assumes that the data images and label images are stored in the same folder
@@ -127,7 +128,7 @@ class ImageDataProvider(BaseDataProvider):
     
     n_class = 2
     
-    def __init__(self, search_path, a_min=None, a_max=None, data_suffix=".png", mask_suffix='_mask.png'):
+    def __init__(self, search_path, complexity, a_min=None, a_max=None, data_suffix=".png", mask_suffix='_mask.png'):
         super(ImageDataProvider, self).__init__(a_min, a_max)
         self.data_suffix = data_suffix
         self.mask_suffix = mask_suffix
@@ -135,7 +136,10 @@ class ImageDataProvider(BaseDataProvider):
         self.bg_idx = -1
         
         self.fg_files = self._find_data_files(search_path + '/foreground')
-        self.bg_files = self._find_data_files(search_path + '/background')
+        if complexity is "all":
+        	self.bg_files = self._find_data_files(search_path + '/background')
+        else:
+        	self.bg_files = self._find_data_files(search_path + '/background/bg_' + str(complexity))
     
         assert len(self.fg_files) > 0, "No foreground files"
         assert len(self.bg_files) > 0, "No background files"
