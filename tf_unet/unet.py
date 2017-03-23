@@ -34,7 +34,7 @@ from tf_unet.layers import (weight_variable, weight_variable_devonc, bias_variab
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(message)s')
 
-def create_conv_net(x, keep_prob, channels, n_class, layers=3, features_root=16, filter_size=3, pool_size=2, summaries=True):
+def create_conv_net(x, keep_prob, channels, n_class, layers=3, features_root=16, filter_size=3, pool_size=2, summaries=False):
     """
     Creates a new convolutional unet for the given parametrization.
     
@@ -137,6 +137,7 @@ def create_conv_net(x, keep_prob, channels, n_class, layers=3, features_root=16,
     up_h_convs["out"] = output_map
     
     if summaries:
+        print(dir(tf.summary))
         for i, (c1, c2) in enumerate(convs):
             tf.summary.image('summary_conv_%02d_01'%i, get_image_summary(c1))
             tf.summary.image('summary_conv_%02d_02'%i, get_image_summary(c2))
@@ -338,8 +339,8 @@ class Trainer(object):
         
         self.norm_gradients_node = tf.Variable(tf.constant(0.0, shape=[len(self.net.gradients_node)]))
         
-        if self.net.summaries:
-            tf.summary.histogram('norm_grads', self.norm_gradients_node)
+        # if self.net.summaries:
+            # tf.summary.histogram('norm_grads', self.norm_gradients_node)
 
         tf.summary.scalar('loss', self.net.cost)
         tf.summary.scalar('cross_entropy', self.net.cross_entropy)
@@ -348,9 +349,10 @@ class Trainer(object):
         self.optimizer = self._get_optimizer(training_iters, global_step)
         tf.summary.scalar('learning_rate', self.learning_rate_node)
 
-        self.summary_op = tf.summary.merge_all()        
-        init = tf.global_variables_initializer()
-        
+        # self.summary_op = tf.summary.merge_all()        
+        # init = tf.global_variables_initializer()
+        init = tf.initialize_all_variables()  #Older version edit. AARGH!
+
         prediction_path = os.path.abspath(self.prediction_path)
         output_path = os.path.abspath(output_path)
         

@@ -7,34 +7,38 @@ Created on Jul 28, 2016
 from __future__ import print_function, division, absolute_import, unicode_literals
 import os
 import glob
-import click
+import argparse
 
 from tf_unet import unet, util,image_util
 
-@click.command()
-@click.option('--data_root', default="/home/ajacob6jwu96/snapshots/CIS2")
-@click.option('--complexity', default= "all"
-@click.option('--output_path', default="/home/ajacob6jwu96/codes/athira/ouput")
-@click.option('--training_iters', default=32)
-@click.option('--epochs', default=100)
-@click.option('--restore', default=False)
-@click.option('--layers', default=5)
-@click.option('--features_root', default=64)
+FLAGS = None
+parser = argparse.ArgumentParser()
+parser.add_argument('--data_root', type=str, default="/home/ajacob6jwu96/codes/athira/data_trial",
+                      help='Directory for input data')
+parser.add_argument('--complexity', type=int, default = 0, help = 'Complexity of background to use: 0 - all')
+parser.add_argument('--output_path', type=str, default = "/home/ajacob6jwu96/codes/athira/ouput", help = 'Output folder')
+parser.add_argument('--training_iters', type=int, default = 32)
+parser.add_argument('--epochs', type=int, default = 100, help = 'Number of epochs to run for')
+parser.add_argument('--restore', type=str, default = False)
+parser.add_argument('--layers', type=int, default = 5)
+parser.add_argument('--features_root', type=int, default = 64)
+
+FLAGS, unparsed = parser.parse_known_args()
 
 #preparing data loading
-data_provider = image_util.ImageDataProvider(data_root, complexity)
+data_provider = image_util.ImageDataProvider(FLAGS.data_root, complexity = FLAGS.complexity)
 
 #setup & training
-net = unet.Unet(layers=layers, features_root=features_root, channels=3, n_class=2)
+net = unet.Unet(layers=FLAGS.layers, features_root=FLAGS.features_root, channels=3, n_class=2)
 trainer = unet.Trainer(net)
 
-path = trainer.train(data_provider, output_path, training_iters=training_iters, epochs=epochs)
+path = trainer.train(data_provider, FLAGS.output_path, training_iters=FLAGS.training_iters, epochs=FLAGS.epochs)
 
 #verification
-...
 prediction = net.predict(path, data)
 unet.error_rate(prediction, util.crop_to_shape(label, prediction.shape))
 img = util.combine_img_prediction(data, label, prediction)
 util.save_image(img, "prediction.jpg")
+
 
 

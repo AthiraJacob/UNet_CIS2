@@ -40,9 +40,10 @@ class BaseDataProvider(object):
     n_class = 2
     
 
-    def __init__(self, a_min=None, a_max=None):
+    def __init__(self, complexity = 0, a_min=None, a_max=None):
         self.a_min = a_min if a_min is not None else -np.inf
         self.a_max = a_max if a_min is not None else np.inf
+        self.complexity = complexity
 
     def _load_data_and_label(self):
     	# Loads single image and processes it
@@ -108,7 +109,7 @@ class BaseDataProvider(object):
     
 
 
-class ImageDataProvider(BaseDataProvider,complexity):
+class ImageDataProvider(BaseDataProvider):
     """
     Generic data provider for images, supports gray scale and colored images.
     Assumes that the data images and label images are stored in the same folder
@@ -129,34 +130,36 @@ class ImageDataProvider(BaseDataProvider,complexity):
     n_class = 2
     
     def __init__(self, search_path, complexity, a_min=None, a_max=None, data_suffix=".png", mask_suffix='_mask.png'):
-        super(ImageDataProvider, self).__init__(a_min, a_max)
+        super(ImageDataProvider, self).__init__(complexity,a_min, a_max)
         self.data_suffix = data_suffix
         self.mask_suffix = mask_suffix
         self.fg_idx = -1
         self.bg_idx = -1
-        
-        self.fg_files = self._find_data_files(search_path + '/foreground')
-        if complexity is "all":
-        	self.bg_files = self._find_data_files(search_path + '/background')
+        self.fg_files = self._find_data_files(search_path + '/fg_trial')
+        self.bg_files = []
+        if complexity == 0:
+            self.bg_folders = self._find_data_files(search_path + '/bg_trial')
+            for i in range(len(self.bg_folders)):
+                self.bg_files = self.bg_files+ self._find_data_files(search_path + '/bg_trial/bg_' + str(i+1) + '/good lighting')
+                self.bg_files = self.bg_files+ self._find_data_files(search_path + '/bg_trial/bg_' + str(i+1) + '/bad lighting')
         else:
-        	self.bg_files = self._find_data_files(search_path + '/background/bg_' + str(complexity))
+        	self.bg_files = self._find_data_files(search_path + '/bg_trial/bg_' + str(complexity))
     
         assert len(self.fg_files) > 0, "No foreground files"
         assert len(self.bg_files) > 0, "No background files"
         print("Number of foreground files used: %s" % len(self.fg_files))
         print("Number of background files used: %s" % len(self.bg_files))
-
         img = self._load_file(self.fg_files[0])
         self.channels = 1 if len(img.shape) == 2 else img.shape[-1]
         
     def _find_data_files(self, search_path):
-        all_files = glob.glob(search_path)
+        all_files = glob.glob(search_path+'/*')
         return [name for name in all_files if not self.mask_suffix in name]
     
     
     def _load_file(self, path, dtype=np.float32):
         # return np.array(Image.open(path), dtype)
-        return np.squeeze(cv2.imread(image_name, cv2.IMREAD_GRAYSCALE))
+        return np.squeeze(cv2.imread(path))
 
     def _cylce_file(self):
         self.fg_idx += 1
@@ -166,7 +169,7 @@ class ImageDataProvider(BaseDataProvider,complexity):
         if self.bg_idx >= len(self.bg_files):
             self.bg_idx = 0 
      
-    def _segment(img):
+    def _segment(self,img):
     	b, g, r = cv2.split(img)
     	ret, mask = cv2.threshold(r, 0, 255, cv2.THRESH_OTSU)
     	mask = 255 - mask
@@ -179,21 +182,21 @@ class ImageDataProvider(BaseDataProvider,complexity):
     	# closing = np.repeat(closing, 3, axis=2)
     	return closing
 
-    def _join(fg, bg, mask):
+    def _join(self,fg, bg, mask):
 	'''
 	Join masked fg image and bg image by zeroing out masked parts fg, 
 	the complement in bg, and adding them both
 	'''
 	#If mask is single channel, convert to 3 channel
-	if mask.ndim!= fg.ndim or  mask.ndim!= bg.ndim:  
-		mask = mask.reshape(list(mask.shape)+[1])
-		mask = np.repeat(mask, 3, axis=2)
-	masked_fg = np.multiply(fg, mask)
-	masked_bg = np.multiply(bg, 1.0 - mask)
-	joined = np.add(masked_fg, masked_bg)   
-	return joined
+        if mask.ndim!= fg.ndim or  mask.ndim!= bg.ndim:  
+		  mask = mask.reshape(list(mask.shape)+[1])
+		  mask = np.repeat(mask, 3, axis=2)
+        masked_fg = np.multiply(fg, mask)
+        masked_bg = np.multiply(bg, 1.0 - mask)
+        joined = np.add(masked_fg, masked_bg)   
+        return joined
 
-	def _augment(img,prob,mask = None):
+    def _augment(self,img,prob,mask = None):
 		'''
 		Function to transform fg, bg: Rotate by random angle, horizontal/vertical flips, translation (only bg), zoom
 		color jitter? 
@@ -248,7 +251,7 @@ class ImageDataProvider(BaseDataProvider,complexity):
 			return nimg
 
 
-	def _compose(fg_img,bg_img, mask = None, prob_fg = 0.5, prob_bg = 0):
+    def _compose(self,fg_img,bg_img, mask = None, prob_fg = 0.5, prob_bg = 0):
 		'''
 		Function to compose foreground and background into an image (includes augmentation of foreground).
 		Inputs: fg_img: foreground image
@@ -260,11 +263,11 @@ class ImageDataProvider(BaseDataProvider,complexity):
 		
 		# Get the mask of the foreground and make it to 3 channels
 		if mask is None:
-			mask = segment(fg_img)
+			mask = self._segment(fg_img)
 		composed_imgs = np.zeros(bg_img.shape)
-		fg_augmented,mask_augmented = augment(fg_img,prob_fg,mask = mask)
-		bg_augmented = augment(bg_img,prob_bg,mask = None)
-		composed_img = join(fg_augmented,bg_augmented, mask_augmented)	
+		fg_augmented,mask_augmented = self._augment(fg_img,prob_fg,mask = mask)
+		bg_augmented = self._augment(bg_img,prob_bg,mask = None)
+		composed_img = self._join(fg_augmented,bg_augmented, mask_augmented)	
 		return composed_img,mask_augmented   
 
     def _next_data(self):
@@ -275,7 +278,7 @@ class ImageDataProvider(BaseDataProvider,complexity):
         
         fg_img = self._load_file(fg_image_name, np.float32)
         bg_img = self._load_file(bg_image_name, np.float32)
-        img, label = _compose(fg_img,bg_img, mask = None, prob_fg = 0.5, prob_bg = 0)
+        img, label = self._compose(fg_img,bg_img, mask = None, prob_fg = 0.5, prob_bg = 0)
         # label = self._load_file(label_name, np.bool)
     	
         return img,label
