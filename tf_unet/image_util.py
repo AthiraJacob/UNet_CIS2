@@ -35,7 +35,7 @@ class BaseDataProvider(object):
 
     """
     
-    channels = 1
+    channels = 3
     n_class = 2
     
 
@@ -44,6 +44,7 @@ class BaseDataProvider(object):
         self.a_max = a_max if a_min is not None else np.inf
 
     def _load_data_and_label(self):
+    	# Loads single image and processes it
         data, label = self._next_data()
             
         train_data = self._process_data(data)
@@ -57,6 +58,7 @@ class BaseDataProvider(object):
         return train_data.reshape(1, ny, nx, self.channels), labels.reshape(1, ny, nx, self.n_class),
     
     def _process_labels(self, label):
+    	#Create two separate masks with each label
         if self.n_class == 2:
             nx = label.shape[1]
             ny = label.shape[0]
@@ -81,9 +83,12 @@ class BaseDataProvider(object):
         :param data: the data array
         :param labels: the label array
         """
+
+        # No post-augmentation as of now
         return data, labels
     
     def __call__(self, n):
+    	# Makes a batch by calling single images in a loop
         train_data, labels = self._load_data_and_label()
         nx = train_data.shape[1]
         ny = train_data.shape[2]
@@ -122,18 +127,22 @@ class ImageDataProvider(BaseDataProvider):
     
     n_class = 2
     
-    def __init__(self, search_path, a_min=None, a_max=None, data_suffix=".tif", mask_suffix='_mask.tif'):
+    def __init__(self, search_path, a_min=None, a_max=None, data_suffix=".png", mask_suffix='_mask.png'):
         super(ImageDataProvider, self).__init__(a_min, a_max)
         self.data_suffix = data_suffix
         self.mask_suffix = mask_suffix
-        self.file_idx = -1
+        self.fg_idx = -1
+        self.bg_idx = -1
         
-        self.data_files = self._find_data_files(search_path)
+        self.fg_files = self._find_data_files(search_path + '/foreground')
+        self.bg_files = self._find_data_files(search_path + '/background')
     
-        assert len(self.data_files) > 0, "No training files"
-        print("Number of files used: %s" % len(self.data_files))
-        
-        img = self._load_file(self.data_files[0])
+        assert len(self.fg_files) > 0, "No foreground files"
+        assert len(self.bg_files) > 0, "No background files"
+        print("Number of foreground files used: %s" % len(self.fg_files))
+        print("Number of background files used: %s" % len(self.bg_files))
+
+        img = self._load_file(self.fg_files[0])
         self.channels = 1 if len(img.shape) == 2 else img.shape[-1]
         
     def _find_data_files(self, search_path):
@@ -142,20 +151,127 @@ class ImageDataProvider(BaseDataProvider):
     
     
     def _load_file(self, path, dtype=np.float32):
-        return np.array(Image.open(path), dtype)
-        # return np.squeeze(cv2.imread(image_name, cv2.IMREAD_GRAYSCALE))
+        # return np.array(Image.open(path), dtype)
+        return np.squeeze(cv2.imread(image_name, cv2.IMREAD_GRAYSCALE))
 
     def _cylce_file(self):
-        self.file_idx += 1
-        if self.file_idx >= len(self.data_files):
-            self.file_idx = 0 
-        
+        self.fg_idx += 1
+        self.bg_idx += 1
+        if self.fg_idx >= len(self.fg_files):
+            self.fg_idx = 0
+        if self.bg_idx >= len(self.bg_files):
+            self.bg_idx = 0 
+     
+    def _segment(img):
+    	b, g, r = cv2.split(img)
+    	ret, mask = cv2.threshold(r, 0, 255, cv2.THRESH_OTSU)
+    	mask = 255 - mask
+
+    	kernel = np.ones((10, 10), np.uint8)
+    	closing = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
+    	closing = closing == 255
+    	#Convert mask to be of the same shape as input image
+    	# closing = closing.reshape(list(closing.shape)+[1])
+    	# closing = np.repeat(closing, 3, axis=2)
+    	return closing
+
+    def _join(fg, bg, mask):
+	'''
+	Join masked fg image and bg image by zeroing out masked parts fg, 
+	the complement in bg, and adding them both
+	'''
+	#If mask is single channel, convert to 3 channel
+	if mask.ndim!= fg.ndim or  mask.ndim!= bg.ndim:  
+		mask = mask.reshape(list(mask.shape)+[1])
+		mask = np.repeat(mask, 3, axis=2)
+	masked_fg = np.multiply(fg, mask)
+	masked_bg = np.multiply(bg, 1.0 - mask)
+	joined = np.add(masked_fg, masked_bg)   
+	return joined
+
+	def _augment(img,prob,mask = None):
+		'''
+		Function to transform fg, bg: Rotate by random angle, horizontal/vertical flips, translation (only bg), zoom
+		color jitter? 
+		Inputs: img: input image (foreground/background)
+				prob: augment image with probability prob
+				mask: provided if img is foreground image
+		Output: nimg: transformed image
+				nmask: transformed mask (only in case of foreground images)
+		'''
+		nimg = img
+		if mask is not None:
+			nmask = mask*1.0
+
+		if np.random.rand()<prob:   # Vertical flip
+			nimg = cv2.flip(nimg,0)
+			if mask is not None:
+				nmask = cv2.flip(nmask,0)
+
+		if np.random.rand()<prob:   # Horizontal flip
+			nimg = cv2.flip(nimg,1)
+			if mask is not None:
+				nmask = cv2.flip(nmask,1)
+
+		if np.random.rand()<prob:   # Rotate by random angle
+			rows,cols = nimg.shape[0],nimg.shape[1]
+			angle = np.random.rand()*180;
+			M = cv2.getRotationMatrix2D((cols/2,rows/2),angle,1)
+			nimg = cv2.warpAffine(nimg,M,(cols,rows))
+			if mask is not None:
+				nmask = cv2.warpAffine(nmask,M,(cols,rows))
+
+		if np.random.rand() < prob: #translation by random distance
+			rows,cols = nimg.shape[0],nimg.shape[1]
+			shift = (np.random.rand() - 0.5)*0.5*rows, (np.random.rand() - 0.5)*0.5*cols
+			M = np.float32([[1,0,shift[0]],[0,1,shift[1]]])
+			nimg = cv2.warpAffine(nimg,M,(cols,rows))
+			nmask = cv2.warpAffine(nmask,M,(cols,rows))
+
+		if np.random.rand() < prob: #Zoom in and crop. Zooms in to maximum 2 times
+			rows,cols = nimg.shape[0],nimg.shape[1]
+			zoom_factor = np.random.rand() + 1
+			nimg = cv2.resize(nimg,None,fx=zoom_factor, fy=zoom_factor, interpolation = cv2.INTER_LINEAR)
+			x1,y1 = int((nimg.shape[0] - rows)/2), int((nimg.shape[1] - cols)/2)
+			nimg = nimg[x1:x1 + rows, y1:y1+cols]
+			if mask is not None:
+				nmask = cv2.resize(nmask,None,fx=zoom_factor, fy=zoom_factor, interpolation = cv2.INTER_LINEAR)
+				nmask = nmask[x1:x1 + rows, y1:y1+cols]
+		
+		if mask is not None:
+			return nimg,nmask
+		else:
+			return nimg
+
+
+	def _compose(fg_img,bg_img, mask = None, prob_fg = 0.5, prob_bg = 0):
+		'''
+		Function to compose foreground and background into an image (includes augmentation of foreground).
+		Inputs: fg_img: foreground image
+			bg_img: background image 
+			mask: mask for segmenting fg_img. If None, segment it online (not recommended!) 
+		Ouput:  composed_img:    composed image
+				mask_augmented = corresponding mask
+		'''
+		
+		# Get the mask of the foreground and make it to 3 channels
+		if mask is None:
+			mask = segment(fg_img)
+		composed_imgs = np.zeros(bg_img.shape)
+		fg_augmented,mask_augmented = augment(fg_img,prob_fg,mask = mask)
+		bg_augmented = augment(bg_img,prob_bg,mask = None)
+		composed_img = join(fg_augmented,bg_augmented, mask_augmented)	
+		return composed_img,mask_augmented   
+
     def _next_data(self):
         self._cylce_file()
-        image_name = self.data_files[self.file_idx]
-        label_name = image_name.replace(self.data_suffix, self.mask_suffix)
+        fg_image_name = self.fg_files[self.fg_idx]
+        bg_image_name = self.bg_files[self.bg_idx]
+        # label_name = image_name.replace(self.data_suffix, self.mask_suffix)
         
-        img = self._load_file(image_name, np.float32)
-        label = self._load_file(label_name, np.bool)
-    
+        fg_img = self._load_file(fg_image_name, np.float32)
+        bg_img = self._load_file(bg_image_name, np.float32)
+        img, label = _compose(fg_img,bg_img, mask = None, prob_fg = 0.5, prob_bg = 0)
+        # label = self._load_file(label_name, np.bool)
+    	
         return img,label
