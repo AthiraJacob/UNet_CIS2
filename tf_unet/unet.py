@@ -349,7 +349,7 @@ class Trainer(object):
         self.optimizer = self._get_optimizer(training_iters, global_step)
         tf.summary.scalar('learning_rate', self.learning_rate_node)
 
-        # self.summary_op = tf.summary.merge_all()        
+        self.summary_op = tf.summary.merge_all()        
         # init = tf.global_variables_initializer()
         init = tf.initialize_all_variables()  #Older version edit. AARGH!
 
@@ -401,7 +401,7 @@ class Trainer(object):
             test_x, test_y = data_provider(self.verification_batch_size)
             pred_shape = self.store_prediction(sess, test_x, test_y, "_init")
             
-            summary_writer = tf.summary.FileWriter(output_path, graph=sess.graph)
+            summary_writer = tf.train.SummaryWriter(output_path, graph=sess.graph)
             logging.info("Start optimization")
             
             avg_gradients = None

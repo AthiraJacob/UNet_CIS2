@@ -64,6 +64,9 @@ class BaseDataProvider(object):
         if self.n_class == 2:
             nx = label.shape[1]
             ny = label.shape[0]
+            # label = label/np.max(label)
+            
+            
             labels = np.zeros((ny, nx, self.n_class), dtype=np.float32)
             labels[..., 1] = label
             labels[..., 0] = ~label
@@ -274,11 +277,17 @@ class ImageDataProvider(BaseDataProvider):
         self._cylce_file()
         fg_image_name = self.fg_files[self.fg_idx]
         bg_image_name = self.bg_files[self.bg_idx]
-        # label_name = image_name.replace(self.data_suffix, self.mask_suffix)
+        label_name = fg_image_name.replace(self.data_suffix, self.mask_suffix)
         
         fg_img = self._load_file(fg_image_name, np.float32)
         bg_img = self._load_file(bg_image_name, np.float32)
-        img, label = self._compose(fg_img,bg_img, mask = None, prob_fg = 0.5, prob_bg = 0)
+        label_img = self._load_file(label_name)
+        img, label = self._compose(fg_img,bg_img, mask = label_img, prob_fg = 0.5, prob_bg = 0)
         # label = self._load_file(label_name, np.bool)
-    	
+    	if label.ndim != 2:
+            label = label[:,:,0]
+            # label = label/np.max(label)
+            # label[label<0.1]=0
+            # label[label>0.9] = 1
+        ret,label = cv2.threshold(cv2.convertScaleAbs(label),0.9,1,cv2.THRESH_BINARY)
         return img,label
