@@ -333,7 +333,9 @@ class Trainer(object):
                                                                      global_step=global_step)
         
         return optimizer
-        
+    
+
+
     def _initialize(self, training_iters, output_path, restore):
         global_step = tf.Variable(0)
         
@@ -349,7 +351,8 @@ class Trainer(object):
         self.optimizer = self._get_optimizer(training_iters, global_step)
         tf.summary.scalar('learning_rate', self.learning_rate_node)
 
-        self.summary_op = tf.summary.merge_all()        
+        # self.summary_op = tf.summary.merge_all()
+        self.summary_op = tf.merge_all_summaries()
         # init = tf.global_variables_initializer()
         init = tf.initialize_all_variables()  #Older version edit. AARGH!
 
