@@ -68,12 +68,12 @@ def create_conv_net(x, keep_prob, channels, n_class, layers=3, features_root=16,
     dw_h_convs = OrderedDict()
     up_h_convs = OrderedDict()
     
-    in_size = 1000
+    in_size = 1000 #????
     size = in_size
     # down layers
     for layer in range(0, layers):
-        features = 2**layer*features_root
-        stddev = np.sqrt(2 / (filter_size**2 * features))
+        features = 2**layer*features_root #Number of channels in each layer
+        stddev = np.sqrt(2 / (filter_size**2 * features))  #for initialization, 1/sqrt(n_in)
         if layer == 0:
             w1 = weight_variable([filter_size, filter_size, channels, features], stddev)
         else:
@@ -86,7 +86,7 @@ def create_conv_net(x, keep_prob, channels, n_class, layers=3, features_root=16,
         conv1 = conv2d(in_node, w1, keep_prob)
         tmp_h_conv = tf.nn.relu(conv1 + b1)
         conv2 = conv2d(tmp_h_conv, w2, keep_prob)
-        dw_h_convs[layer] = tf.nn.relu(conv2 + b2)
+        dw_h_convs[layer] = tf.nn.relu(conv2 + b2) #conv1-relu-conv2-relu
         
         weights.append((w1, w2))
         biases.append((b1, b2))
@@ -94,7 +94,7 @@ def create_conv_net(x, keep_prob, channels, n_class, layers=3, features_root=16,
         
         size -= 4
         if layer < layers-1:
-            pools[layer] = max_pool(dw_h_convs[layer], pool_size)
+            pools[layer] = max_pool(dw_h_convs[layer], pool_size) #conv1-relu-conv2-relu-pool
             in_node = pools[layer]
             size /= 2
         
@@ -104,12 +104,13 @@ def create_conv_net(x, keep_prob, channels, n_class, layers=3, features_root=16,
     for layer in range(layers-2, -1, -1):
         features = 2**(layer+1)*features_root
         stddev = np.sqrt(2 / (filter_size**2 * features))
-        
+
+        #deconvolution doubles height & width, halves features. transpose of conv layer?
         wd = weight_variable_devonc([pool_size, pool_size, features//2, features], stddev)
         bd = bias_variable([features//2])
         h_deconv = tf.nn.relu(deconv2d(in_node, wd, pool_size) + bd)
-        h_deconv_concat = crop_and_concat(dw_h_convs[layer], h_deconv)
-        deconv[layer] = h_deconv_concat
+        h_deconv_concat = crop_and_concat(dw_h_convs[layer], h_deconv) #concat features from downsampling path
+        deconv[layer] = h_deconv_concat #deconv - relu (+features)
         
         w1 = weight_variable([filter_size, filter_size, features, features//2], stddev)
         w2 = weight_variable([filter_size, filter_size, features//2, features//2], stddev)
@@ -117,8 +118,8 @@ def create_conv_net(x, keep_prob, channels, n_class, layers=3, features_root=16,
         b2 = bias_variable([features//2])
         
         conv1 = conv2d(h_deconv_concat, w1, keep_prob)
-        h_conv = tf.nn.relu(conv1 + b1)
-        conv2 = conv2d(h_conv, w2, keep_prob)
+        h_conv = tf.nn.relu(conv1 + b1) #add deconv - conv layers keeping the same size
+        conv2 = conv2d(h_conv, w2, keep_prob)  #deconv-relu-conv-relu - conv - relu
         in_node = tf.nn.relu(conv2 + b2)
         up_h_convs[layer] = in_node
 
@@ -178,6 +179,8 @@ class Unet(object):
     """
     
     def __init__(self, channels=3, n_class=2, cost="cross_entropy", cost_kwargs={}, **kwargs):
+        #add "class weights" to cost_kwargs
+
         tf.reset_default_graph()
         
         self.n_class = n_class
@@ -188,12 +191,13 @@ class Unet(object):
         self.keep_prob = tf.placeholder(tf.float32) #dropout (keep probability)
         
         logits, self.variables, self.offset = create_conv_net(self.x, self.keep_prob, channels, n_class, **kwargs)
-        
+        #offset gives how input.size - output.size,logits: model output?  variables: weights & biases 
+
         self.cost = self._get_cost(logits, cost, cost_kwargs)
         
         self.gradients_node = tf.gradients(self.cost, self.variables)
          
-        self.cross_entropy = tf.reduce_mean(cross_entropy(tf.reshape(self.y, [-1, n_class]),
+        self.cross_entropy = tf.reduce_mean(cross_entropy(tf.reshape(self.y, [-1, n_class]), #summary log
                                                           tf.reshape(pixel_wise_softmax_2(logits), [-1, n_class])))
         
         self.predicter = pixel_wise_softmax_2(logits)
@@ -212,12 +216,13 @@ class Unet(object):
         flat_labels = tf.reshape(self.y, [-1, self.n_class])
         if cost_name == "cross_entropy":
             class_weights = cost_kwargs.pop("class_weights", None)
-            
+            class_weights = [0.05,0.95]
+            #ADD!!
             if class_weights is not None:
                 class_weights = tf.constant(np.array(class_weights, dtype=np.float32))
         
                 weight_map = tf.mul(flat_labels, class_weights)
-                weight_map = tf.reduce_sum(weight_map, axis=1)
+                weight_map = tf.reduce_sum(weight_map)
         
                 loss_map = tf.nn.softmax_cross_entropy_with_logits(flat_logits, flat_labels)
                 weighted_loss = tf.mul(loss_map, weight_map)
@@ -241,7 +246,7 @@ class Unet(object):
         if regularizer is not None:
             regularizers = sum([tf.nn.l2_loss(variable) for variable in self.variables])
             loss += (regularizer * regularizers)
-            
+        
         return loss
 
     def predict(self, model_path, x_test):
@@ -253,7 +258,8 @@ class Unet(object):
         :returns prediction: The unet prediction Shape [n, px, py, labels] (px=nx-self.offset/2) 
         """
         
-        init = tf.global_variables_initializer()
+        # init = tf.global_variables_initializer()
+        init = tf.initialize_all_variables()
         with tf.Session() as sess:
             # Initialize variables
             sess.run(init)
@@ -412,6 +418,7 @@ class Trainer(object):
                 total_loss = 0
                 for step in range((epoch*training_iters), ((epoch+1)*training_iters)):
                     batch_x, batch_y = data_provider(self.batch_size)
+                    # print(batch_y)
                      
                     # Run optimization op (backprop)
                     _, loss, lr, gradients = sess.run((self.optimizer, self.net.cost, self.learning_rate_node, self.net.gradients_node), 
@@ -423,17 +430,19 @@ class Trainer(object):
                         avg_gradients = [np.zeros_like(gradient) for gradient in gradients]
                     for i in range(len(gradients)):
                         avg_gradients[i] = (avg_gradients[i] * (1.0 - (1.0 / (step+1)))) + (gradients[i] / (step+1))
+                        #Maintains an average of graddients
                         
-                    norm_gradients = [np.linalg.norm(gradient) for gradient in avg_gradients]
-                    self.norm_gradients_node.assign(norm_gradients).eval()
+                    norm_gradients = [np.linalg.norm(gradient) for gradient in avg_gradients] 
+                    self.norm_gradients_node.assign(norm_gradients).eval() 
                     
-                    if step % display_step == 0:
+                    if step % display_step == 0: #function that displays stats
                         self.output_minibatch_stats(sess, summary_writer, step, batch_x, util.crop_to_shape(batch_y, pred_shape))
                         
                     total_loss += loss
 
                 self.output_epoch_stats(epoch, total_loss, training_iters, lr)
                 self.store_prediction(sess, test_x, test_y, "epoch_%s"%epoch)
+                #test on testing set after every epoch
                     
                 save_path = self.net.save(sess, save_path)
             logging.info("Optimization Finished!")
@@ -449,7 +458,8 @@ class Trainer(object):
         loss = sess.run(self.net.cost, feed_dict={self.net.x: batch_x, 
                                                        self.net.y: util.crop_to_shape(batch_y, pred_shape), 
                                                        self.net.keep_prob: 1.})
-        
+        # print(prediction)
+        # print(batch_y)
         logging.info("Verification error= {:.1f}%, loss= {:.4f}".format(error_rate(prediction,
                                                                           util.crop_to_shape(batch_y,
                                                                                              prediction.shape)),

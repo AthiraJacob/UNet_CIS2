@@ -21,6 +21,7 @@ import glob
 import numpy as np
 from PIL import Image
 import cv2
+import skimage
 
 class BaseDataProvider(object):
     """
@@ -51,6 +52,7 @@ class BaseDataProvider(object):
             
         train_data = self._process_data(data)
         labels = self._process_labels(label)
+        # print(np.min(labels))
         
         train_data, labels = self._post_process(train_data, labels)
         
@@ -69,7 +71,8 @@ class BaseDataProvider(object):
             
             labels = np.zeros((ny, nx, self.n_class), dtype=np.float32)
             labels[..., 1] = label
-            labels[..., 0] = ~label
+            labels[..., 0] = 1 - label
+            # print(~label)
             return labels
         
         return label
@@ -103,11 +106,12 @@ class BaseDataProvider(object):
     
         X[0] = train_data
         Y[0] = labels
+
         for i in range(1, n):
             train_data, labels = self._load_data_and_label()
             X[i] = train_data
             Y[i] = labels
-    
+        # print(np.min(Y))
         return X, Y
     
 
@@ -138,15 +142,17 @@ class ImageDataProvider(BaseDataProvider):
         self.mask_suffix = mask_suffix
         self.fg_idx = -1
         self.bg_idx = -1
-        self.fg_files = self._find_data_files(search_path + '/fg_trial')
+        self.fg_files = self._find_data_files(search_path + '/foreground')
         self.bg_files = []
         if complexity == 0:
-            self.bg_folders = self._find_data_files(search_path + '/bg_trial')
+            self.bg_folders = self._find_data_files(search_path + '/background')
+            print(len(self.bg_folders))
             for i in range(len(self.bg_folders)):
-                self.bg_files = self.bg_files+ self._find_data_files(search_path + '/bg_trial/bg_' + str(i+1) + '/good lighting')
-                self.bg_files = self.bg_files+ self._find_data_files(search_path + '/bg_trial/bg_' + str(i+1) + '/bad lighting')
+                self.bg_files = self.bg_files+ self._find_data_files(search_path + '/background/bg_' + str(i+1) + '/good lighting')
+                self.bg_files = self.bg_files+ self._find_data_files(search_path + '/background/bg_' + str(i+1) + '/bad lighting')
         else:
-        	self.bg_files = self._find_data_files(search_path + '/bg_trial/bg_' + str(complexity))
+        	self.bg_files = self.bg_files+ self._find_data_files(search_path + '/background/bg_' + str(complexity) + '/good lighting')
+        	self.bg_files = self.bg_files+ self._find_data_files(search_path + '/background/bg_' + str(complexity) + '/bad lighting')
     
         assert len(self.fg_files) > 0, "No foreground files"
         assert len(self.bg_files) > 0, "No background files"
@@ -191,15 +197,16 @@ class ImageDataProvider(BaseDataProvider):
 	the complement in bg, and adding them both
 	'''
 	#If mask is single channel, convert to 3 channel
-        if mask.ndim!= fg.ndim or  mask.ndim!= bg.ndim:  
-		  mask = mask.reshape(list(mask.shape)+[1])
-		  mask = np.repeat(mask, 3, axis=2)
+    #     if mask.ndim!= fg.ndim or  mask.ndim!= bg.ndim:  
+		  # mask = mask.reshape(list(mask.shape)+[1])
+		  # mask = np.repeat(mask, 3, axis=2)
+        mask = skimage.img_as_bool(mask)*1
         masked_fg = np.multiply(fg, mask)
         masked_bg = np.multiply(bg, 1.0 - mask)
         joined = np.add(masked_fg, masked_bg)   
         return joined
 
-    def _augment(self,img,prob,mask = None):
+    def _augment(self,img,prob,mask):
 		'''
 		Function to transform fg, bg: Rotate by random angle, horizontal/vertical flips, translation (only bg), zoom
 		color jitter? 
@@ -254,7 +261,7 @@ class ImageDataProvider(BaseDataProvider):
 			return nimg
 
 
-    def _compose(self,fg_img,bg_img, mask = None, prob_fg = 0.5, prob_bg = 0):
+    def _compose(self,fg_img,bg_img, mask = None, prob_fg = 0.5, prob_bg = 0.5):
 		'''
 		Function to compose foreground and background into an image (includes augmentation of foreground).
 		Inputs: fg_img: foreground image
@@ -281,13 +288,14 @@ class ImageDataProvider(BaseDataProvider):
         
         fg_img = self._load_file(fg_image_name, np.float32)
         bg_img = self._load_file(bg_image_name, np.float32)
-        label_img = self._load_file(label_name)
+        label_img = self._load_file(label_name,np.bool)
         img, label = self._compose(fg_img,bg_img, mask = label_img, prob_fg = 0.5, prob_bg = 0)
+        cv2.imwrite('prediction/img.png',img)
         # label = self._load_file(label_name, np.bool)
     	if label.ndim != 2:
             label = label[:,:,0]
-            # label = label/np.max(label)
-            # label[label<0.1]=0
-            # label[label>0.9] = 1
-        ret,label = cv2.threshold(cv2.convertScaleAbs(label),0.9,1,cv2.THRESH_BINARY)
+        label = skimage.img_as_bool(label)*1
+        cv2.imwrite('prediction/label.png',label*255)
+        # img = img/255.0
+
         return img,label
